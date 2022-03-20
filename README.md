@@ -1,10 +1,13 @@
 # raftos
+Raft Consensus implementation for Distributed Systems(CS60002) for Spring 2022.
 
-[![Build Status](https://travis-ci.org/zhebrak/raftos.svg)](https://travis-ci.org/zhebrak/raftos) [![PyPI version](https://badge.fury.io/py/raftos.svg)](http://badge.fury.io/py/raftos)
+#### Group Members:
+- Tushar Gupta (18CS30044)
+- Mayank Raj (18CS30028)
+- Ashish Gour (18CS30008)
+- Proteet Paul (18CS10065)
 
-Asynchronous replication framework based on [Raft Algorithm](https://raft.github.io/) for fault-tolerant distributed systems.
-
-![](https://raw.github.com/zhebrak/raftos/master/docs/img/raft_rsm.png)
+Asynchronous replication framework based on Raft Algorithm for fault-tolerant distributed systems.
 
 #### Install
 
@@ -16,8 +19,6 @@ pip install raftos
 
 ```python
 import raftos
-
-
 loop.create_task(
     raftos.register(
         # node running on this machine
@@ -38,8 +39,6 @@ loop.run_forever()
 ```python
 counter = raftos.Replicated(name='counter')
 data = raftos.ReplicatedDict(name='data')
-
-
 # value on a leader gets replicated to all followers
 await counter.set(42)
 await data.update({
@@ -51,7 +50,7 @@ await data.update({
 })
 ```
 
-#### In case you only need consensus algorithm with leader election
+<!-- #### In case you only need consensus algorithm with leader election
 
 ```python
 await raftos.wait_until_leader(current_node)
@@ -67,9 +66,5 @@ raftos.configure({
     'on_leader': start,
     'on_follower': stop
 })
-```
-
+``` -->
 Whenever the leader falls, someone takes its place.
-
-
-[Paper](https://raft.github.io/raft.pdf) & [Video](https://www.youtube.com/watch?v=YbZ3zDzDnrw)
