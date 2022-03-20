@@ -7,7 +7,7 @@ class BaseCryptor:
 
     def encrypt(self, data):
         return data
-        
+
     def decrypt(self, data):
         return data
 
@@ -80,7 +80,12 @@ class Configuration:
 
             # Election callbacks
             'on_leader': lambda: None,
-            'on_follower': lambda: None
+            'on_follower': lambda: None,
+
+            # network details
+            'serial_no': 1,
+            'network_address': 127.0.0.1,
+            'network_name': 'localhost'
         }
 
     def configure(self, kwargs):
