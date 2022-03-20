@@ -1,7 +1,7 @@
 # raftos
 Raft Consensus implementation for Distributed Systems(CS60002) for Spring 2022.
 
-Group Members:
+#### Group Members:
 - Tushar Gupta (18CS30044)
 - Mayank Raj (18CS30028)
 - Ashish Gour (18CS30008)
