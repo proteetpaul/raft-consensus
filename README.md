@@ -1,10 +1,6 @@
 # raftos
 
-[![Build Status](https://travis-ci.org/zhebrak/raftos.svg)](https://travis-ci.org/zhebrak/raftos) [![PyPI version](https://badge.fury.io/py/raftos.svg)](http://badge.fury.io/py/raftos)
-
-Asynchronous replication framework based on [Raft Algorithm](https://raft.github.io/) for fault-tolerant distributed systems.
-
-![](https://raw.github.com/zhebrak/raftos/master/docs/img/raft_rsm.png)
+Asynchronous replication framework based on Raft Algorithm for fault-tolerant distributed systems.
 
 #### Install
 
@@ -70,6 +66,3 @@ raftos.configure({
 ```
 
 Whenever the leader falls, someone takes its place.
-
-
-[Paper](https://raft.github.io/raft.pdf) & [Video](https://www.youtube.com/watch?v=YbZ3zDzDnrw)
