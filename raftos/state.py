@@ -11,9 +11,9 @@ from .timer import Timer
 
 def validate_term(func):
     """Compares current term and request term:
-        if current term is stale:
+        if current term is stale(means current term of a server < the recieved term of the peer):
             update current term & become follower
-        if received term is stale:
+        if received term is stale(means current term of a server > the recieved term from the peer)::
             respond with False
     """
 
@@ -55,18 +55,28 @@ def validate_commit_index(func):
 
         return func(self, *args, **kwargs)
     return wrapped
+recieverid=0
 
 
+
+
+
+
+
+
+
+
+#A Class for each node in the system, leader, candidate or follower
 class BaseState:
     def __init__(self, state):
         self.state = state
 
+        self.id = self.state.id
+        self.loop = self.state.loop
+
         self.storage = self.state.storage
         self.log = self.state.log
         self.state_machine = self.state.state_machine
-
-        self.id = self.state.id
-        self.loop = self.state.loop
 
     @validate_term
     def on_receive_request_vote(self, data):
@@ -76,11 +86,9 @@ class BaseState:
             candidate_id — candidate requesting vote
             last_log_index — index of candidate’s last log entry
             last_log_term — term of candidate’s last log entry
-
         Results:
             term — for candidate to update itself
             vote_granted — True means candidate received vote
-
         Receiver implementation:
             1. Reply False if term < self term
             2. If voted_for is None or candidateId ????,
@@ -99,13 +107,11 @@ class BaseState:
             leader_id — so follower can redirect clients
             prev_log_index — index of log entry immediately preceding new ones
             prev_log_term — term of prev_log_index entry
-            entries[] — log entries to store (empty for heartbeat)
+            entries[] — log entries to store
             commit_index — leader’s commit_index
-
         Results:
             term — for leader to update itself
             success — True if follower contained entry matching prev_log_index and prev_log_term
-
         Receiver implementation:
             1. Reply False if term < self term
             2. Reply False if log entry term at prev_log_index doesn't match prev_log_term
@@ -117,13 +123,17 @@ class BaseState:
     @validate_term
     def on_receive_append_entries_response(self, data):
         """AppendEntries RPC response — description above"""
+senderid=0
 
 
+
+
+
+# Here we consider the heartbeats as empty AppendEntries RPCs to servers
 class Leader(BaseState):
     """Raft Leader
     Upon election: send initial empty AppendEntries RPCs (heartbeat) to each server;
     repeat during idle periods to prevent election timeouts
-
     — If command received from client: append entry to local log, respond after entry applied to state machine
     - If last log index ≥ next_index for a follower: send AppendEntries RPC with log entries starting at next_index
     — If successful: update next_index and match_index for follower
@@ -135,24 +145,17 @@ class Leader(BaseState):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.heartbeat_timer = Timer(config.heartbeat_interval, self.heartbeat)
-        self.step_down_timer = Timer(
-            config.step_down_missed_heartbeats * config.heartbeat_interval,
-            self.state.to_follower
-        )
-
         self.request_id = 0
         self.response_map = {}
+
+        self.heartbeat_timer = Timer(config.heartbeat_interval, self.heartbeat)
+        self.step_down_timer = Timer(config.step_down_missed_heartbeats * config.heartbeat_interval,self.state.to_follower)
 
     def start(self):
         self.init_log()
         self.heartbeat()
         self.heartbeat_timer.start()
         self.step_down_timer.start()
-
-    def stop(self):
-        self.heartbeat_timer.stop()
-        self.step_down_timer.stop()
 
     def init_log(self):
         self.log.next_index = {
@@ -163,24 +166,26 @@ class Leader(BaseState):
             follower: 0 for follower in self.state.cluster
         }
 
+    def stop(self):
+        self.heartbeat_timer.stop()
+        self.step_down_timer.stop()
+
     async def append_entries(self, destination=None):
         """AppendEntries RPC — replicate log entries / heartbeat
         Args:
             destination — destination id
-
         Request params:
             term — leader’s term
             leader_id — so follower can redirect clients
             prev_log_index — index of log entry immediately preceding new ones
             prev_log_term — term of prev_log_index entry
             commit_index — leader’s commit_index
-
-            entries[] — log entries to store (empty for heartbeat)
+            entries[] — log entries to store 
         """
 
-        # Send AppendEntries RPC to destination if specified or broadcast to everyone
-        destination_list = [destination] if destination else self.state.cluster
-        for destination in destination_list:
+        # Send AppendEntries RPC to destination if specified or broadcast to everyone(when destination = None)
+        dest_list = [destination] if destination else self.state.cluster
+        for dest in dest_list:
             data = {
                 'type': 'append_entries',
 
@@ -191,71 +196,68 @@ class Leader(BaseState):
                 'request_id': self.request_id
             }
 
-            next_index = self.log.next_index[destination]
+            next_index = self.log.next_index[dest]
             prev_index = next_index - 1
 
-            if self.log.last_log_index >= next_index:
-                data['entries'] = [self.log[next_index]]
+            if self.log.last_log_index < next_index:
+                data['entries'] = []
 
             else:
-                data['entries'] = []
+                data['entries'] = [self.log[next_index]]
 
             data.update({
                 'prev_log_index': prev_index,
                 'prev_log_term': self.log[prev_index]['term'] if self.log and prev_index else 0
             })
 
-            asyncio.ensure_future(self.state.send(data, destination), loop=self.loop)
+            asyncio.ensure_future(self.state.send(data, dest), loop=self.loop)
 
     @validate_commit_index
     @validate_term
     def on_receive_append_entries_response(self, data):
-        sender_id = self.state.get_sender_id(data['sender'])
+        s_id = self.state.get_sender_id(data['sender'])
 
         # Count all unqiue responses per particular heartbeat interval
         # and step down via <step_down_timer> if leader doesn't get majority of responses for
         # <step_down_missed_heartbeats> heartbeats
 
         if data['request_id'] in self.response_map:
-            self.response_map[data['request_id']].add(sender_id)
+            self.response_map[data['request_id']].add(s_id)
 
             if self.state.is_majority(len(self.response_map[data['request_id']]) + 1):
                 self.step_down_timer.reset()
                 del self.response_map[data['request_id']]
 
         if not data['success']:
-            self.log.next_index[sender_id] = max(self.log.next_index[sender_id] - 1, 1)
+            self.log.next_index[s_id] = max(self.log.next_index[s_id] - 1, 1)
 
         else:
-            self.log.next_index[sender_id] = data['last_log_index'] + 1
-            self.log.match_index[sender_id] = data['last_log_index']
+            self.log.next_index[s_id] = data['last_log_index'] + 1
+            self.log.match_index[s_id] = data['last_log_index']
 
             self.update_commit_index()
 
         # Send AppendEntries RPC to continue updating fast-forward log (data['success'] == False)
         # or in case there are new entries to sync (data['success'] == data['updated'] == True)
-        if self.log.last_log_index >= self.log.next_index[sender_id]:
-            asyncio.ensure_future(self.append_entries(destination=sender_id), loop=self.loop)
+        if self.log.last_log_index >= self.log.next_index[s_id]:
+            asyncio.ensure_future(self.append_entries(destination=s_id), loop=self.loop)
 
     def update_commit_index(self):
-        commited_on_majority = 0
+        commit_on_majority = 0
         for index in range(self.log.commit_index + 1, self.log.last_log_index + 1):
-            commited_count = len([
-                1 for follower in self.log.match_index
-                if self.log.match_index[follower] >= index
-            ])
+            commited_count = len([1 for follower in self.log.match_index if self.log.match_index[follower] >= index])
 
             # If index is matched on at least half + self for current term — commit
             # That may cause commit fails upon restart with stale logs
             is_current_term = self.log[index]['term'] == self.storage.term
             if self.state.is_majority(commited_count + 1) and is_current_term:
-                commited_on_majority = index
+                commit_on_majority = index
 
             else:
                 break
 
-        if commited_on_majority > self.log.commit_index:
-            self.log.commit_index = commited_on_majority
+        if commit_on_majority > self.log.commit_index:
+            self.log.commit_index = commit_on_majority
 
     async def execute_command(self, command):
         """Write to log & send AppendEntries RPC"""
@@ -301,9 +303,6 @@ class Candidate(BaseState):
         self.request_vote()
         self.election_timer.start()
 
-    def stop(self):
-        self.election_timer.stop()
-
     def request_vote(self):
         """RequestVote RPC — gather votes
         Arguments:
@@ -321,6 +320,9 @@ class Candidate(BaseState):
             'last_log_term': self.log.last_log_term
         }
         self.state.broadcast(data)
+
+    def stop(self):
+        self.election_timer.stop()
 
     @validate_term
     def on_receive_request_vote_response(self, data):
@@ -347,7 +349,6 @@ class Candidate(BaseState):
 
 class Follower(BaseState):
     """Raft Follower
-
     — Respond to RPCs from candidates and leaders
     — If election timeout elapses without receiving AppendEntries RPC from current leader
     or granting vote to candidate: convert to candidate
@@ -362,9 +363,6 @@ class Follower(BaseState):
         self.init_storage()
         self.election_timer.start()
 
-    def stop(self):
-        self.election_timer.stop()
-
     def init_storage(self):
         """Set current term to zero upon initialization & voted_for to None"""
         if not self.storage.exists('term'):
@@ -375,6 +373,9 @@ class Follower(BaseState):
         self.storage.update({
             'voted_for': None
         })
+
+    def stop(self):
+        self.election_timer.stop()
 
     @staticmethod
     def election_interval():
@@ -388,9 +389,7 @@ class Follower(BaseState):
         # Reply False if log doesn’t contain an entry at prev_log_index whose term matches prev_log_term
         try:
             prev_log_index = data['prev_log_index']
-            if prev_log_index > self.log.last_log_index or (
-                prev_log_index and self.log[prev_log_index]['term'] != data['prev_log_term']
-            ):
+            if prev_log_index > self.log.last_log_index or (prev_log_index and self.log[prev_log_index]['term'] != data['prev_log_term']):
                 response = {
                     'type': 'append_entries_response',
                     'term': self.storage.term,
@@ -613,3 +612,166 @@ class State:
 
             cls.wait_until_leader_id = None
             cls.wait_until_leader_future = None
+
+if senderid != 0:
+    """Raft Follower
+    — Respond to RPCs from candidates and leaders
+    — If election timeout elapses without receiving AppendEntries RPC from current leader
+    or granting vote to candidate: convert to candidate
+    """
+    s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    s.bind((socket.gethostname(),0))
+    port = s.getsockname()[1]
+    s.listen(50)
+    timeout = 2000
+    inputsockets = [s]
+    t = os.fork()
+    if  t==0:
+        while True:
+            rlist, wlist, xlist = select(inputsockets,[],[],timeout)
+            if not rlist and not wlist and not xlist:
+                s.close()
+                sys.exit(0)
+            for insock in rlist:
+                if insock is s:
+                    new_socket, addr = s.accept()
+                    inputsockets.append(new_socket)      
+                else:
+                    data = insock.recv(1024)
+                    if data:
+                        print data
+                        insock.close()
+                        inputsockets.remove(insock)
+    s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    s.bind((socket.gethostname(),0))
+    port = s.getsockname()[1]
+    s.listen(50)
+    timeout = 2000
+    inputsockets = [s]
+    t = os.fork()
+    if  t==0:
+        while True:
+            rlist, wlist, xlist = select(inputsockets,[],[],timeout)
+            if not rlist and not wlist and not xlist:
+                s.close()
+                sys.exit(0)
+            for insock in rlist:
+                if insock is s:
+                    new_socket, addr = s.accept()
+                    inputsockets.append(new_socket)      
+                else:
+                    data = insock.recv(1024)
+                    if data:
+                        print data
+                        insock.close()
+                        inputsockets.remove(insock)
+
+if recieverid != 0
+	emptyVal = -2
+    heartBeat = -3
+    voteRequest = -4
+    acceptVoteRequest = -5
+    rejectVoteRequest = -6
+    heartBeatResponse = -7
+    diedSuffix = 100
+    myId = emptyVal
+    currentValues = {}
+    currentLeader = emptyVal
+    acceptedHosts = Set([])
+    respondedToHeartBeat = Set([])
+    currentState = 0   # 0 for follower 1 for candidate 2 for leader
+    leader = 2; candidate = 1; follower = 0;
+    currentTerm = 0 # everyone starts in 0th term
+    currentElectionRound = 0
+    timeoutRangeMin = 150 # this is in millisecond
+    timeoutRangeMax = 300 # this is in millisecond
+    electionTimeout = 0 # this will be set in main for the first time
+    heartBeatTimeout = 0 # useful only if I am leader
+    votedForThisTerm = False
+    votedFor = emptyVal
+
+
+class Node(object):
+    """
+    A representation of any node in the network.
+    The ID must uniquely identify a node. Node objects with the same ID will be treated as equal, i.e. as representing the same node.
+    """
+
+    def __init__(self, id, **kwargs):
+        """
+        Initialise the Node; id must be immutable, hashable, and unique.
+        :param id: unique, immutable, hashable ID of a node
+        :type id: any
+        :param **kwargs: any further information that should be kept about this node
+        """
+
+        self._id = id
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+
+    def __setattr__(self, name, value):
+        if name == 'id':
+            raise AttributeError('Node id is not mutable')
+        super(Node, self).__setattr__(name, value)
+
+    def __eq__(self, other):
+        return isinstance(other, Node) and self.id == other.id
+
+    def __ne__(self, other):
+        # In Python 3, __ne__ defaults to inverting the result of __eq__.
+        # Python 2 isn't as sane. So for Python 2 compatibility, we also need to define the != operator explicitly.
+        return not (self == other)
+
+    def __hash__(self):
+        return hash(self.id)
+
+    def __str__(self):
+        return self.id
+
+    def __repr__(self):
+        v = vars(self)
+        return '{}({}{})'.format(type(self).__name__, repr(self.id), (', ' + ', '.join('{} = {}'.format(key, repr(v[key])) for key in v if key != '_id')) if len(v) > 1 else '')
+
+    def _destroy(self):
+        pass
+    @property
+    def id(self):
+        return self._id
+
+class TCPNode(Node):
+    """
+    A node intended for communication over TCP/IP. Its id is the network address (host:port).
+    """
+
+    def __init__(self, address, **kwargs):
+        """
+        Initialise the TCPNode
+        :param address: network address of the node in the format 'host:port'
+        :type address: str
+        :param **kwargs: any further information that should be kept about this node
+        """
+
+        super(TCPNode, self).__init__(address, **kwargs)
+        self.__address = address
+        self.__host, port = address.rsplit(':', 1)
+        self.__port = int(port)
+        #self.__ip = globalDnsResolver().resolve(self.host)
+
+    @property
+    def address(self):
+        return self.__address
+
+    @property
+    def host(self):
+        return self.__host
+
+    @property
+    def port(self):
+        return self.__port
+
+    def __repr__(self):
+        v = vars(self)
+        filtered = ['_id', '_TCPNode__address', '_TCPNode__host', '_TCPNode__port']
+        formatted = ['{} = {}'.format(key, repr(v[key])) for key in v if key not in filtered]
+        return '{}({}{})'.format(type(self).__name__, repr(self.id), (', ' + ', '.join(formatted)) if len(formatted) else '')
+
