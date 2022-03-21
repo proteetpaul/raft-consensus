@@ -184,8 +184,8 @@ class Leader(BaseState):
         """
 
         # Send AppendEntries RPC to destination if specified or broadcast to everyone(when destination = None)
-        dest_list = [destination] if destination else self.state.cluster
-        for dest in dest_list:
+        destination_list = [destination] if destination else self.state.cluster
+        for destination in destination_list:
             data = {
                 'type': 'append_entries',
 
@@ -196,7 +196,7 @@ class Leader(BaseState):
                 'request_id': self.request_id
             }
 
-            next_index = self.log.next_index[dest]
+            next_index = self.log.next_index[destination]
             prev_index = next_index - 1
 
             if self.log.last_log_index < next_index:
@@ -210,40 +210,40 @@ class Leader(BaseState):
                 'prev_log_term': self.log[prev_index]['term'] if self.log and prev_index else 0
             })
 
-            asyncio.ensure_future(self.state.send(data, dest), loop=self.loop)
+            asyncio.ensure_future(self.state.send(data, destination), loop=self.loop)
 
     @validate_commit_index
     @validate_term
     def on_receive_append_entries_response(self, data):
-        s_id = self.state.get_sender_id(data['sender'])
+        sender_id = self.state.get_sender_id(data['sender'])
 
         # Count all unqiue responses per particular heartbeat interval
         # and step down via <step_down_timer> if leader doesn't get majority of responses for
         # <step_down_missed_heartbeats> heartbeats
 
         if data['request_id'] in self.response_map:
-            self.response_map[data['request_id']].add(s_id)
+            self.response_map[data['request_id']].add(sender_id)
 
             if self.state.is_majority(len(self.response_map[data['request_id']]) + 1):
                 self.step_down_timer.reset()
                 del self.response_map[data['request_id']]
 
         if not data['success']:
-            self.log.next_index[s_id] = max(self.log.next_index[s_id] - 1, 1)
+            self.log.next_index[sender_id] = max(self.log.next_index[sender_id] - 1, 1)
 
         else:
-            self.log.next_index[s_id] = data['last_log_index'] + 1
-            self.log.match_index[s_id] = data['last_log_index']
+            self.log.next_index[sender_id] = data['last_log_index'] + 1
+            self.log.match_index[sender_id] = data['last_log_index']
 
             self.update_commit_index()
 
         # Send AppendEntries RPC to continue updating fast-forward log (data['success'] == False)
         # or in case there are new entries to sync (data['success'] == data['updated'] == True)
-        if self.log.last_log_index >= self.log.next_index[s_id]:
-            asyncio.ensure_future(self.append_entries(destination=s_id), loop=self.loop)
+        if self.log.last_log_index >= self.log.next_index[sender_id]:
+            asyncio.ensure_future(self.append_entries(destination=sender_id), loop=self.loop)
 
     def update_commit_index(self):
-        commit_on_majority = 0
+        commited_on_majority = 0
         for index in range(self.log.commit_index + 1, self.log.last_log_index + 1):
             commited_count = len([1 for follower in self.log.match_index if self.log.match_index[follower] >= index])
 
@@ -251,13 +251,13 @@ class Leader(BaseState):
             # That may cause commit fails upon restart with stale logs
             is_current_term = self.log[index]['term'] == self.storage.term
             if self.state.is_majority(commited_count + 1) and is_current_term:
-                commit_on_majority = index
+                commited_on_majority = index
 
             else:
                 break
 
-        if commit_on_majority > self.log.commit_index:
-            self.log.commit_index = commit_on_majority
+        if commited_on_majority > self.log.commit_index:
+            self.log.commit_index = commited_on_majority
 
     async def execute_command(self, command):
         """Write to log & send AppendEntries RPC"""
